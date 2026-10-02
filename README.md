@@ -630,6 +630,8 @@ value, exists, err := client.Lookup(ctx, key)
 
 `CompareAndPut(ctx, key, expected, value)` 用 etcd 事务条件写入：`expected == nil` 表示仅在 key 缺失时创建；非 nil 表示要求 key 存在且值相同，空切片表示已存在的空值。返回 `false, nil` 表示冲突。比较基于值，不检测值变更后又恢复的 ABA 情况。
 
+`Watch` 在每次监听创建成功（包括重连）时发送 `Type: "SYNC"`，调用方应重新读取最新状态；PUT/DELETE 事件仍照常发送。服务端取消监听或流解码失败会触发重连，调用方取消 context 则停止监听。该策略用于恢复最新状态，不保证重放断线期间的每个事件。
+
 ## 依赖项
 
 | 库 | 用途 |

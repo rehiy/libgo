@@ -15,7 +15,7 @@ import (
 
 // WatchEvent watch 收到的事件
 type WatchEvent struct {
-	Type  string // "PUT" 或 "DELETE"
+	Type  string // "PUT"、"DELETE" 或 "SYNC"（监听建立/重连后需重新读取最新状态）
 	Value string // PUT 时的新值（已解码）；DELETE 时为空
 }
 
@@ -24,7 +24,10 @@ var errWatchAuthExpired = errors.New("etcd watch 认证过期，已重置 token"
 // watchResponse 是 etcd watch 流中每行 JSON 的结构
 type watchResponse struct {
 	Result struct {
-		Events []struct {
+		Created      bool   `json:"created"`
+		Canceled     bool   `json:"canceled"`
+		CancelReason string `json:"cancel_reason"`
+		Events       []struct {
 			Type string `json:"type"`
 			Kv   struct {
 				Value string `json:"value"`
@@ -38,6 +41,7 @@ type watchResponse struct {
 
 // Watch 监听 key 变化，通过 events/errs channel 通知，ctx 取消时停止。
 // 连接断开后会自动重连，重连间隔从 1s 指数退避至 30s。
+// 每次监听创建成功先发送 SYNC，调用方重新读取最新状态以补偿连接间隙。
 func (c *Client) Watch(ctx context.Context, key string) (<-chan WatchEvent, <-chan error) {
 	events := make(chan WatchEvent, 8)
 	errs := make(chan error, 4)
@@ -61,7 +65,7 @@ func (c *Client) Watch(ctx context.Context, key string) (<-chan WatchEvent, <-ch
 			default:
 			}
 
-			err, connected := c.watchOnce(ctx, key, events, errs)
+			err, connected := c.watchOnce(ctx, key, events)
 			if err == nil {
 				// ctx 取消导致的正常退出
 				return
@@ -106,8 +110,8 @@ func (c *Client) Watch(ctx context.Context, key string) (<-chan WatchEvent, <-ch
 }
 
 // watchOnce 建立一次 watch 连接并持续读取事件，直到连接断开或 ctx 取消。
-// 返回值：err=nil 表示 ctx 取消的正常退出；connected 表示本次连接是否曾成功收到过事件。
-func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchEvent, errs chan<- error) (err error, connected bool) {
+// 返回值：err=nil 表示 ctx 取消的正常退出；connected 表示本次连接是否曾成功建立或收到事件。
+func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchEvent) (err error, connected bool) {
 	body, _ := json.Marshal(map[string]any{
 		"create_request": map[string]any{
 			"key":             b64(key),
@@ -163,14 +167,21 @@ func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchE
 
 		var msg watchResponse
 		if err := json.Unmarshal(line, &msg); err != nil {
-			continue
+			return err, connected
 		}
 		if msg.Error.Message != "" {
+			return fmt.Errorf("etcd watch 服务端错误: %s", msg.Error.Message), connected
+		}
+		if msg.Result.Canceled {
+			return fmt.Errorf("etcd watch 已取消: %s", msg.Result.CancelReason), connected
+		}
+		if msg.Result.Created {
+			connected = true
 			select {
-			case errs <- fmt.Errorf("etcd watch 服务端错误: %s", msg.Error.Message):
-			default:
+			case events <- WatchEvent{Type: "SYNC"}:
+			case <-ctx.Done():
+				return nil, connected
 			}
-			continue
 		}
 
 		for _, ev := range msg.Result.Events {
@@ -178,12 +189,9 @@ func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchE
 			if ev.Type == "PUT" {
 				decoded, decErr := base64.StdEncoding.DecodeString(ev.Kv.Value)
 				if decErr != nil {
-					select {
-					case errs <- fmt.Errorf("etcd watch value 解码失败: %w", decErr):
-					default:
-					}
-					continue
+					return fmt.Errorf("etcd watch value 解码失败: %w", decErr), connected
 				}
+
 				val = string(decoded)
 			}
 			connected = true // 成功收到事件，标记连接曾经健康
