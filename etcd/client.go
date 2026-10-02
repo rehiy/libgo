@@ -98,6 +98,33 @@ func (c *Client) Put(ctx context.Context, key, value string) error {
 	return err
 }
 
+// CompareAndPut 原子比较并写入。expected 为 nil 时只创建缺失 key；
+// 非 nil 时比较值且要求 key 存在。返回 false 表示冲突，不执行写入。
+func (c *Client) CompareAndPut(ctx context.Context, key string, expected, value []byte) (bool, error) {
+	compare := []map[string]any{{"key": b64(key), "target": "VERSION", "result": "EQUAL", "version": "0"}}
+	if expected != nil {
+		compare = []map[string]any{
+			{"key": b64(key), "target": "VERSION", "result": "GREATER", "version": "0"},
+			{"key": b64(key), "target": "VALUE", "result": "EQUAL", "value": base64.StdEncoding.EncodeToString(expected)},
+		}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"compare": compare,
+		"success": []map[string]any{{"request_put": map[string]string{"key": b64(key), "value": base64.StdEncoding.EncodeToString(value)}}},
+	})
+	raw, err := c.do(ctx, "/v3/kv/txn", body)
+	if err != nil {
+		return false, err
+	}
+	var result struct {
+		Succeeded bool `json:"succeeded"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return false, fmt.Errorf("etcd txn 响应解析失败: %w", err)
+	}
+	return result.Succeeded, nil
+}
+
 // do 执行一次 HTTP POST 请求，若 ctx 无 deadline 则自动附加 c.timeout。
 // 当配置了认证且收到 401 时，自动刷新 token 并重试一次。
 func (c *Client) do(ctx context.Context, path string, body []byte) ([]byte, error) {

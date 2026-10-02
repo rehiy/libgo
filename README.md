@@ -628,6 +628,8 @@ value, exists, err := client.Lookup(ctx, key)
 // err != nil：读取失败；exists == false：key 不存在；exists == true：value 可以为空。
 ```
 
+`CompareAndPut(ctx, key, expected, value)` 用 etcd 事务条件写入：`expected == nil` 表示仅在 key 缺失时创建；非 nil 表示要求 key 存在且值相同，空切片表示已存在的空值。返回 `false, nil` 表示冲突。比较基于值，不检测值变更后又恢复的 ABA 情况。
+
 ## 依赖项
 
 | 库 | 用途 |
