@@ -606,6 +606,15 @@ result, err := tencent.Request(&tencent.RequestParam{
 
 ---
 
+## etcd 精确读取
+
+`Client.Get(ctx, key)` 保持原有行为：缺失和空字符串都返回空字符串。需要判断 key 是否存在时，使用 `Lookup`：
+
+```go
+value, exists, err := client.Lookup(ctx, key)
+// err != nil：读取失败；exists == false：key 不存在；exists == true：value 可以为空。
+```
+
 ## 依赖项
 
 | 库 | 用途 |

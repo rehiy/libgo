@@ -55,13 +55,19 @@ func New(cfg Config) *Client {
 
 // Get 读取 key 的精确值，key 不存在时返回空字符串
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
+	value, _, err := c.Lookup(ctx, key)
+	return value, err
+}
+
+// Lookup 读取 key 的精确值并返回是否存在，区分空字符串与缺失。
+func (c *Client) Lookup(ctx context.Context, key string) (string, bool, error) {
 	body, _ := json.Marshal(map[string]any{
 		"key":   b64(key),
 		"limit": 1, // 精确查询只需要一条结果
 	})
 	raw, err := c.do(ctx, "/v3/kv/range", body)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	var result struct {
@@ -70,16 +76,16 @@ func (c *Client) Get(ctx context.Context, key string) (string, error) {
 		} `json:"kvs"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("etcd Get 响应解析失败: %w", err)
+		return "", false, fmt.Errorf("etcd Get 响应解析失败: %w", err)
 	}
 	if len(result.Kvs) == 0 {
-		return "", nil
+		return "", false, nil
 	}
 	decoded, err := base64.StdEncoding.DecodeString(result.Kvs[0].Value)
 	if err != nil {
-		return "", fmt.Errorf("etcd Get value 解码失败: %w", err)
+		return "", false, fmt.Errorf("etcd Get value 解码失败: %w", err)
 	}
-	return string(decoded), nil
+	return string(decoded), true, nil
 }
 
 // Put 写入 key/value
