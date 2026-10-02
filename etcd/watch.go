@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +14,7 @@ import (
 
 // WatchEvent watch 收到的事件
 type WatchEvent struct {
-	Type  string // "PUT"、"DELETE" 或 "SYNC"（监听建立/重连后需重新读取最新状态）
+	Type  string // "PUT" 或 "DELETE"（最新状态）
 	Value string // PUT 时的新值（已解码）；DELETE 时为空
 }
 
@@ -24,26 +23,90 @@ var errWatchAuthExpired = errors.New("etcd watch 认证过期，已重置 token"
 // watchResponse 是 etcd watch 流中每行 JSON 的结构
 type watchResponse struct {
 	Result struct {
-		Created      bool   `json:"created"`
-		Canceled     bool   `json:"canceled"`
-		CancelReason string `json:"cancel_reason"`
-		Events       []struct {
-			Type string `json:"type"`
-			Kv   struct {
-				Value string `json:"value"`
-			} `json:"kv"`
-		} `json:"events"`
+		Created      bool              `json:"created"`
+		Canceled     bool              `json:"canceled"`
+		CancelReason string            `json:"cancel_reason"`
+		Events       []json.RawMessage `json:"events"`
 	} `json:"result"`
 	Error struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-// Watch 监听 key 变化，通过 events/errs channel 通知，ctx 取消时停止。
-// 连接断开后会自动重连，重连间隔从 1s 指数退避至 30s。
-// 每次监听创建成功先发送 SYNC，调用方重新读取最新状态以补偿连接间隙。
+// Watch 监听 key 的最新状态，首次建立和重连后重新读取。
+// 连续相同状态不重复发送；读取失败每秒重试，错误通过 errs 非阻塞发送。
+// 仅发送 PUT/DELETE，PUT 的空值与 DELETE 的缺失状态不同；不重放历史事件。
 func (c *Client) Watch(ctx context.Context, key string) (<-chan WatchEvent, <-chan error) {
-	events := make(chan WatchEvent, 8)
+	out := make(chan WatchEvent, 8)
+	errs := make(chan error, 4)
+	watchEvents, watchErrs := c.watchChanges(ctx, key)
+	go func() {
+		defer close(out)
+		defer close(errs)
+		var last WatchEvent
+		known := false
+		retry := time.NewTimer(time.Hour)
+		retry.Stop()
+		defer retry.Stop()
+		var retryCh <-chan time.Time
+		report := func(err error) {
+			select {
+			case errs <- err:
+			default:
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-watchEvents:
+				if !ok {
+					return
+				}
+			case <-retryCh:
+			case err, ok := <-watchErrs:
+				if !ok {
+					watchErrs = nil
+				} else {
+					report(err)
+				}
+				continue
+			}
+			readCtx, cancel := context.WithTimeout(ctx, c.timeout)
+			value, exists, err := c.Lookup(readCtx, key)
+			cancel()
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				report(err)
+				retry.Reset(time.Second)
+				retryCh = retry.C
+				continue
+			}
+			retry.Stop()
+			retryCh = nil
+			event := WatchEvent{Type: "PUT", Value: value}
+			if !exists {
+				event.Type = "DELETE"
+			}
+			if known && event == last {
+				continue
+			}
+			select {
+			case out <- event:
+				last, known = event, true
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, errs
+}
+
+// watchChanges 维护底层连接，将创建监听和变更批次作为状态同步提示。
+func (c *Client) watchChanges(ctx context.Context, key string) (<-chan struct{}, <-chan error) {
+	events := make(chan struct{}, 1)
 	errs := make(chan error, 4)
 
 	go func() {
@@ -111,7 +174,7 @@ func (c *Client) Watch(ctx context.Context, key string) (<-chan WatchEvent, <-ch
 
 // watchOnce 建立一次 watch 连接并持续读取事件，直到连接断开或 ctx 取消。
 // 返回值：err=nil 表示 ctx 取消的正常退出；connected 表示本次连接是否曾成功建立或收到事件。
-func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchEvent) (err error, connected bool) {
+func (c *Client) watchOnce(ctx context.Context, key string, events chan<- struct{}) (err error, connected bool) {
 	body, _ := json.Marshal(map[string]any{
 		"create_request": map[string]any{
 			"key":             b64(key),
@@ -175,30 +238,12 @@ func (c *Client) watchOnce(ctx context.Context, key string, events chan<- WatchE
 		if msg.Result.Canceled {
 			return fmt.Errorf("etcd watch 已取消: %s", msg.Result.CancelReason), connected
 		}
-		if msg.Result.Created {
+		if msg.Result.Created || len(msg.Result.Events) > 0 {
 			connected = true
+			// 合并积压提示，消费者将读取最新状态。
 			select {
-			case events <- WatchEvent{Type: "SYNC"}:
-			case <-ctx.Done():
-				return nil, connected
-			}
-		}
-
-		for _, ev := range msg.Result.Events {
-			var val string
-			if ev.Type == "PUT" {
-				decoded, decErr := base64.StdEncoding.DecodeString(ev.Kv.Value)
-				if decErr != nil {
-					return fmt.Errorf("etcd watch value 解码失败: %w", decErr), connected
-				}
-
-				val = string(decoded)
-			}
-			connected = true // 成功收到事件，标记连接曾经健康
-			select {
-			case events <- WatchEvent{Type: ev.Type, Value: val}:
-			case <-ctx.Done():
-				return nil, connected
+			case events <- struct{}{}:
+			default:
 			}
 		}
 	}

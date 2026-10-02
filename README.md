@@ -630,7 +630,19 @@ value, exists, err := client.Lookup(ctx, key)
 
 `CompareAndPut(ctx, key, expected, value)` 用 etcd 事务条件写入：`expected == nil` 表示仅在 key 缺失时创建；非 nil 表示要求 key 存在且值相同，空切片表示已存在的空值。返回 `false, nil` 表示冲突。比较基于值，不检测值变更后又恢复的 ABA 情况。
 
-`Watch` 在每次监听创建成功（包括重连）时发送 `Type: "SYNC"`，调用方应重新读取最新状态；PUT/DELETE 事件仍照常发送。服务端取消监听或流解码失败会触发重连，调用方取消 context 则停止监听。该策略用于恢复最新状态，不保证重放断线期间的每个事件。
+### etcd 状态监听
+
+`Watch(ctx, key)` 统一处理自动重连与最新状态同步：首次监听建立及重连后读取最新值，读取失败每秒重试，连续相同状态去重。返回事件和错误两个 channel；取消 context 后关闭。连接失败采用 1 秒至 30 秒的指数退避，认证过期立即重试一次。错误非阻塞发送，消费者较慢时可能丢弃错误通知。
+
+```go
+events, errs := client.Watch(ctx, key)
+// events 仅含 PUT/DELETE；PUT 的 Value 可以为空，DELETE 表示 key 缺失。
+// 调用方处理 events 和 errs，并通过 ctx 取消监听。
+```
+
+状态读取使用客户端超时，且受调用方 context 约束。该接口用于追踪最新状态，不保证逐条重放历史变更。
+
+**兼容性变更**：`Watch` 不再发送 `SYNC`，首次建立和重连后由客户端直接读取并发送最新 PUT/DELETE 状态；相同状态不重复发送。调用方无需再收到提示后自行读取。原始事件中的中间状态可能被合并。
 
 ## 依赖项
 
