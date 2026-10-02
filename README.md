@@ -655,3 +655,34 @@ value, exists, err := client.Lookup(ctx, key)
 ## 许可证
 
 Copyright (c) 2022 - 2026 OpenTDP
+
+## POSIX shell 参数转义
+
+`command.POSIXQuote(value)` 将字符串转义为一个 POSIX shell 参数，适用于 sh/bash/zsh，包括空字符串和包含单引号的参数；不适用于 cmd 或 PowerShell。
+
+```go
+script := "cat " + command.POSIXQuote(filePath)
+```
+
+## TOTP
+
+`secure` 提供 `TOTPSecretGenerate()`、`TOTPCode(secret, counter)`、`TOTPValidate(secret, code)` 和 `TOTPURI(issuer, username, secret)`。采用 SHA1、6 位验证码、30 秒周期，校验允许前后一周期偏移。密钥使用无填充的 Base32 编码；`TOTPCode` 的 counter 为时间步，解析失败返回空字符串。`TOTPValidate` 会裁剪输入空白并将密钥转为大写。
+
+```go
+secret, err := secure.TOTPSecretGenerate()
+if err != nil { return err }
+uri := secure.TOTPURI("MyApp", username, secret)
+valid := secure.TOTPValidate(secret, code)
+```
+
+## AES-GCM 与 AEAD
+
+`secure.NewAESGCM(key)` 接收 16、24 或 32 字节的 AES 密钥。`AEADSeal(aead, plaintext, additionalData)` 随机生成 nonce，返回 `nonce || ciphertext || tag`；`AEADOpen(aead, payload, additionalData)` 校验并解密，截断或被篡改的数据返回错误。附加认证数据不写入结果，加解密时必须一致。调用方负责密钥管理和传入有效的 AEAD 实例。
+
+```go
+aead, err := secure.NewAESGCM(key)
+if err != nil { return err }
+payload, err := secure.AEADSeal(aead, plaintext, nil)
+if err != nil { return err }
+plaintext, err = secure.AEADOpen(aead, payload, nil)
+```
