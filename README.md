@@ -45,7 +45,7 @@ go get -u github.com/rehiy/libgo
 | 模块 | 说明 |
 |------|------|
 | `secure` | 加密工具集：Bcrypt 密码哈希、DES3-CBC 加密、MD5 哈希、SSH 密钥生成 |
-| `certify` | SSL 证书自动管理（支持 DNS-01/HTTP-01 验证，通配符域名） |
+| `certify` | SSL 证书自动管理（支持 DNS-01/HTTP-01 验证，通配符域名）及 PEM 证书解析 |
 
 ### 网络与通信
 
@@ -393,6 +393,19 @@ handler := manager.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *h
     w.Write([]byte("ACME verification"))
 }))
 ```
+
+### PEM 证书解析
+
+```go
+import "github.com/rehiy/libgo/certify"
+
+cert := certify.PEMParse(data) // data 为 PEM 格式的 []byte
+if cert != nil {
+    // 使用 cert.Subject、cert.DNSNames、cert.NotAfter 等证书信息
+}
+```
+
+`PEMParse` 跳过私钥等其他 PEM block，解析第一个 `CERTIFICATE` block；内容缺失或该证书无效时返回 `nil`。
 
 ### 文件操作
 
