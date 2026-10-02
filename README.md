@@ -631,7 +631,7 @@ value, exists, err := client.Lookup(ctx, key)
 
 ## 版本要求
 
-- Go 1.25+
+- Go 1.26+
 
 ---
 
