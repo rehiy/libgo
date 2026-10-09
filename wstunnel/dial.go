@@ -1,4 +1,4 @@
-package tunnel
+package wstunnel
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 // ErrUnauthorized 表示服务方拒绝了凭据（令牌无效或已被吊销），重试没有意义。
-var ErrUnauthorized = errors.New("tunnel: 服务方拒绝了凭据")
+var ErrUnauthorized = errors.New("wstunnel: 服务方拒绝了凭据")
 
 const (
 	handshakeTimeout = 15 * time.Second

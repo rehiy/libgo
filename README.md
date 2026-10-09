@@ -56,7 +56,7 @@ go get -u github.com/rehiy/libgo
 | `websocket` | WebSocket 客户端/服务器封装，支持 Origin 验证和 ping 保活 |
 
 | `relay` | 通用双向流转发，支持 WebSocket 到 TCP 转发 |
-| `tunnel` | 单条 WebSocket 上的 yamux 多路复用隧道，含拨号、断线指数退避重连 |
+| `wstunnel` | 单条 WebSocket 上的 yamux 多路复用隧道，含拨号、断线指数退避重连 |
 | `webssh` | SSH 客户端，支持密码和私钥认证 |
 
 ### 系统监控
@@ -335,25 +335,25 @@ httpd.GET("/ws", config.Handler(func(conn *websocket.ServerConn) {
 ```go
 import (
     "github.com/rehiy/libgo/websocket"
-    "github.com/rehiy/libgo/tunnel"
+    "github.com/rehiy/libgo/wstunnel"
 )
 
 // 拨号方：连接服务方并作为 yamux Server 接受流，断线自动重连
-err := tunnel.Maintain(ctx, tunnel.MaintainOptions{
-    Dial: func(ctx context.Context) (*tunnel.Session, error) {
-        return tunnel.Dial(ctx, tunnel.DialOptions{
+err := wstunnel.Maintain(ctx, wstunnel.MaintainOptions{
+    Dial: func(ctx context.Context) (*wstunnel.Session, error) {
+        return wstunnel.Dial(ctx, wstunnel.DialOptions{
             URL:    "https://center.example.com/connect",
             Header: http.Header{"Authorization": {"Bearer " + token}},
         })
     },
-    Serve: func(s *tunnel.Session) { http.Serve(s.Listener(), handler) },
+    Serve: func(s *wstunnel.Session) { http.Serve(s.Listener(), handler) },
 })
-// 服务方拒绝凭据（HTTP 401/403）时返回 tunnel.ErrUnauthorized
+// 服务方拒绝凭据（HTTP 401/403）时返回 wstunnel.ErrUnauthorized
 
 // 服务方：在已升级的 WebSocket 上作为 yamux Client 发起流
 httpd.GET("/connect", config.Handler(func(ws *websocket.ServerConn) {
     ws.SetMessageType(websocket.BinaryMessage)
-    sess, err := tunnel.Attach(ws)
+    sess, err := wstunnel.Attach(ws)
     if err != nil {
         return
     }

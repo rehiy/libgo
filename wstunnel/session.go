@@ -1,11 +1,11 @@
-// Package tunnel 在单条 WebSocket 连接上提供多路复用的双向流通道。
+// Package wstunnel 在单条 WebSocket 连接上提供多路复用的双向流通道。
 //
 // 角色与谁拨号无关：拨号方调用 Dial 并作为 yamux Server 接受流，
 // 服务方在已升级的连接上 Attach 并作为 yamux Client 发起流。
 // 每个流都是一条 net.Conn，上层可以直接在其上跑 http.Server / http.Transport。
 //
 // 服务方的 WebSocket 升级由 websocket.ServerConfig 完成，拨号由 websocket.DialContext 完成。
-package tunnel
+package wstunnel
 
 import (
 	"io"
@@ -78,9 +78,9 @@ type listener struct{ s *Session }
 
 func (l listener) Accept() (net.Conn, error) { return l.s.Accept() }
 func (l listener) Close() error              { return l.s.Close() }
-func (l listener) Addr() net.Addr            { return addr("tunnel") }
+func (l listener) Addr() net.Addr            { return addr("wstunnel") }
 
 type addr string
 
-func (a addr) Network() string { return "tunnel" }
+func (a addr) Network() string { return "wstunnel" }
 func (a addr) String() string  { return string(a) }
