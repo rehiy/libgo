@@ -54,7 +54,9 @@ go get -u github.com/rehiy/libgo
 | `request` | HTTP 客户端，支持 JSON/表单请求、文件下载、进度显示 |
 | `httpd` | HTTP 服务器（基于 Gin），含 Recovery 中间件、静态文件服务 |
 | `websocket` | WebSocket 客户端/服务器封装，支持 Origin 验证和 ping 保活 |
+
 | `relay` | 通用双向流转发，支持 WebSocket 到 TCP 转发 |
+| `tunnel` | 单条 WebSocket 上的 yamux 多路复用隧道，含拨号、断线指数退避重连 |
 | `webssh` | SSH 客户端，支持密码和私钥认证 |
 
 ### 系统监控
@@ -62,7 +64,7 @@ go get -u github.com/rehiy/libgo
 | 模块 | 说明 |
 |------|------|
 | `psutil` | 系统信息采集：CPU、内存、硬盘、网络、主机信息、公网 IP |
-| `gpu` | GPU 信息采集，支持 NVIDIA、AMD、Intel、Apple GPU |
+| `gpu` | GPU 信息采集，支持 NVIDIA、AMD、Intel、Apple GPU；另提供进程级 GPU 占用 |
 | `command` | 系统命令执行工具，支持 Shell/BAT/PowerShell/EXEC 模式 |
 
 ### 日志与文件
@@ -205,6 +207,14 @@ for _, stat := range stats {
         stat.MemoryUsed/1024/1024, stat.MemoryTotal/1024/1024,
         stat.Temperature)
 }
+
+// 进程级 GPU 占用：Linux 走内核 DRM fdinfo（厂商无关），其他平台回退 nvidia-smi
+procs, err := gpu.GetProcessStats(ctx)
+for _, proc := range procs {
+    fmt.Printf("PID %d (%s): 显存 %d MB, 利用率 %.1f%%, 设备 %v\n",
+        proc.PID, proc.Name,
+        proc.MemoryUsed/1024/1024, proc.Utilization, proc.Devices)
+}
 ```
 
 ### 命令执行
@@ -279,6 +289,21 @@ conn.ReadJSON(&msg)
 conn.Close()
 ```
 
+需要自定义握手头、`context` 取消或读取握手响应码（如区分 401/403 与网络故障）时，使用 `DialContext`：
+
+```go
+conn, resp, err := websocket.DialContext(ctx, "wss://example.com/ws", websocket.DialOptions{
+    Header: http.Header{"Authorization": {"Bearer " + token}},
+})
+if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized {
+    // 凭据被拒绝
+}
+
+// 承载二进制协议时：写二进制消息，读时忽略对端误发的文本消息
+conn.SetMessageType(websocket.BinaryMessage)
+conn.SetReadBinaryOnly(true)
+```
+
 ### WebSocket 服务器
 
 ```go
@@ -302,6 +327,38 @@ httpd.GET("/ws", config.Handler(func(conn *websocket.ServerConn) {
         }
         conn.Write(buf[:n])
     }
+}))
+```
+
+### WebSocket 隧道
+
+```go
+import (
+    "github.com/rehiy/libgo/websocket"
+    "github.com/rehiy/libgo/tunnel"
+)
+
+// 拨号方：连接服务方并作为 yamux Server 接受流，断线自动重连
+err := tunnel.Maintain(ctx, tunnel.MaintainOptions{
+    Dial: func(ctx context.Context) (*tunnel.Session, error) {
+        return tunnel.Dial(ctx, tunnel.DialOptions{
+            URL:    "https://center.example.com/connect",
+            Header: http.Header{"Authorization": {"Bearer " + token}},
+        })
+    },
+    Serve: func(s *tunnel.Session) { http.Serve(s.Listener(), handler) },
+})
+// 服务方拒绝凭据（HTTP 401/403）时返回 tunnel.ErrUnauthorized
+
+// 服务方：在已升级的 WebSocket 上作为 yamux Client 发起流
+httpd.GET("/connect", config.Handler(func(ws *websocket.ServerConn) {
+    ws.SetMessageType(websocket.BinaryMessage)
+    sess, err := tunnel.Attach(ws)
+    if err != nil {
+        return
+    }
+    conn, _ := sess.Open() // 每个流是一条 net.Conn
+    _ = conn
 }))
 ```
 
