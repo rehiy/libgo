@@ -13,6 +13,102 @@ func collectNvidiaCards(ctx context.Context, cards []*ghwgpu.GraphicsCard) ([]*D
 	return collectNvidiaSMI(ctx, cards)
 }
 
+// collectNvidiaProcessApps 用 nvidia-smi 补齐进程显存与卡号
+// 仅在 DRM fdinfo 未覆盖或未给出显存时生效，避免与内核数据重复统计
+func collectNvidiaProcessApps(ctx context.Context, known map[int32]*ProcessStat) error {
+	path, err := exec.LookPath("nvidia-smi")
+	if err != nil || path == "" {
+		return nil
+	}
+
+	cmdCtx, cancel := commandContext(ctx)
+	defer cancel()
+
+	out, err := exec.CommandContext(cmdCtx, path,
+		"--query-compute-apps=pid,used_memory,gpu_uuid",
+		"--format=csv,noheader,nounits",
+	).Output()
+	if err != nil {
+		return err
+	}
+
+	records, err := readCSVRecords(out)
+	if err != nil {
+		return err
+	}
+
+	indexByUUID := nvidiaGPUIndex(ctx)
+
+	for _, fields := range records {
+		if len(fields) < 3 {
+			continue
+		}
+		pid := parseIntOrDefault(strings.TrimSpace(fields[0]), 0)
+		if pid <= 0 {
+			continue
+		}
+
+		// nounits 下 used_memory 的单位为 MiB
+		memory := parseSizeBytes(strings.TrimSpace(fields[1]), "MiB")
+		uuid := strings.TrimSpace(fields[2])
+
+		stat, exists := known[int32(pid)]
+		if !exists {
+			stat = &ProcessStat{
+				PID:         int32(pid),
+				Name:        readProcComm(int32(pid)),
+				Vendor:      "nvidia",
+				MemoryUsed:  memory,
+				Utilization: UtilizationUnknown,
+			}
+			known[int32(pid)] = stat
+		} else if stat.MemoryUsed == 0 {
+			stat.MemoryUsed = memory
+			if stat.Vendor == "" {
+				stat.Vendor = "nvidia"
+			}
+		}
+
+		if idx, ok := indexByUUID[uuid]; ok {
+			appendDevice(stat, "nvidia"+idx)
+		}
+	}
+
+	return nil
+}
+
+// nvidiaGPUIndex 建立 GPU UUID 到序号的映射，用于把进程归属到具体卡号
+func nvidiaGPUIndex(ctx context.Context) map[string]string {
+	path, err := exec.LookPath("nvidia-smi")
+	if err != nil || path == "" {
+		return nil
+	}
+
+	cmdCtx, cancel := commandContext(ctx)
+	defer cancel()
+
+	out, err := exec.CommandContext(cmdCtx, path,
+		"--query-gpu=index,uuid", "--format=csv,noheader",
+	).Output()
+	if err != nil {
+		return nil
+	}
+
+	records, err := readCSVRecords(out)
+	if err != nil {
+		return nil
+	}
+
+	index := make(map[string]string, len(records))
+	for _, fields := range records {
+		if len(fields) < 2 {
+			continue
+		}
+		index[strings.TrimSpace(fields[1])] = strings.TrimSpace(fields[0])
+	}
+	return index
+}
+
 // nvidia-smi fallback
 func collectNvidiaSMI(ctx context.Context, cards []*ghwgpu.GraphicsCard) ([]*DeviceStat, error) {
 	path, err := exec.LookPath("nvidia-smi")
