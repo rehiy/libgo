@@ -12,6 +12,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-think/openssl v1.26.1
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/jaypipes/ghw v0.26.0
 	github.com/libdns/alidns v1.0.7
