@@ -118,15 +118,22 @@ func parseFloatOrDefault(s string, def float64) float64 {
 	return v
 }
 
-func parseUint64Bytes(valStr, unitStr string) uint64 {
-	v, _ := strconv.ParseFloat(strings.TrimSpace(valStr), 64)
+// parseSizeBytes 将带单位的数量换算为字节
+// 兼容 1024 进制（KiB/MiB/GiB）与 1000 进制（KB/MB/GB）写法，无单位时按字节处理
+func parseSizeBytes(valStr, unitStr string) uint64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(valStr), 64)
+	if err != nil {
+		return 0
+	}
 	switch strings.ToLower(strings.TrimSpace(unitStr)) {
-	case "gb":
-		return uint64(v * 1024 * 1024 * 1024)
-	case "mb":
-		return uint64(v * 1024 * 1024)
-	case "kb":
+	case "kb", "kib":
 		return uint64(v * 1024)
+	case "mb", "mib":
+		return uint64(v * 1024 * 1024)
+	case "gb", "gib":
+		return uint64(v * 1024 * 1024 * 1024)
+	case "tb", "tib":
+		return uint64(v * 1024 * 1024 * 1024 * 1024)
 	default:
 		return uint64(v)
 	}

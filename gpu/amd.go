@@ -122,7 +122,7 @@ func collectAMDRocmSMI(ctx context.Context, cards []*ghwgpu.GraphicsCard) ([]*De
 			name = "AMD GPU"
 		}
 
-		memTotal := parseUint64Bytes(csvField(fields, colIdx, "vram total"), csvField(fields, colIdx, "vram total unit"))
+		memTotal := parseSizeBytes(csvField(fields, colIdx, "vram total"), csvField(fields, colIdx, "vram total unit"))
 		if memTotal == 0 {
 			cardIdx++
 			continue
@@ -137,7 +137,7 @@ func collectAMDRocmSMI(ctx context.Context, cards []*ghwgpu.GraphicsCard) ([]*De
 			Address:     addr,
 			Name:        strings.TrimSpace(name),
 			Vendor:      "amd",
-			MemoryUsed:  parseUint64Bytes(csvField(fields, colIdx, "vram used"), csvField(fields, colIdx, "vram used unit")),
+			MemoryUsed:  parseSizeBytes(csvField(fields, colIdx, "vram used"), csvField(fields, colIdx, "vram used unit")),
 			MemoryTotal: memTotal,
 			Utilization: parseFloatOrDefault(csvField(fields, colIdx, "gpu use (%)"), 0),
 			Temperature: parseIntOrDefault(csvField(fields, colIdx, "temperature (sensor edge) (c)"), parseIntOrDefault(csvField(fields, colIdx, "temperature (sensor junction) (c)"), -1)),
