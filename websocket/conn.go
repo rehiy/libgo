@@ -3,6 +3,7 @@ package websocket
 import (
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,6 +21,7 @@ type Conn struct {
 	rmu          sync.Mutex    // guards NextReader / ReadJSON
 	rdBuf        io.Reader     // current message reader (stream shim)
 	msgType      int           // TextMessage or BinaryMessage
+	binaryOnly   atomic.Bool   // Read 仅接收二进制消息，忽略文本消息
 	writeTimeout time.Duration // write deadline timeout
 }
 
@@ -38,6 +40,12 @@ func (c *Conn) SetMessageType(t int) {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	c.msgType = t
+}
+
+// SetReadBinaryOnly 设置 Read 是否只接收二进制消息；开启后文本消息会被整条丢弃。
+// 适用于承载二进制协议的连接，避免对端误发的文本帧污染字节流。
+func (c *Conn) SetReadBinaryOnly(on bool) {
+	c.binaryOnly.Store(on)
 }
 
 // Read 流式读，跨多消息拼接
@@ -59,9 +67,12 @@ func (c *Conn) Read(p []byte) (int, error) {
 			}
 			return 0, err
 		}
-		_, r, err := c.ws.NextReader()
+		messageType, r, err := c.ws.NextReader()
 		if err != nil {
 			return 0, err
+		}
+		if c.binaryOnly.Load() && messageType != websocket.BinaryMessage {
+			continue
 		}
 		c.rdBuf = r
 	}
@@ -106,8 +117,11 @@ func (c *Conn) Ping(data []byte) error {
 	return c.ws.WriteControl(websocket.PingMessage, data, time.Now().Add(timeout))
 }
 
-// Close 关闭连接
+// Close 尽力发送关闭帧后关闭连接。
+// WriteControl 可与其他方法并发调用，不占用 wmu，避免写阻塞时 Close 无法解除阻塞。
 func (c *Conn) Close() error {
+	_ = c.ws.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 	return c.ws.Close()
 }
 
