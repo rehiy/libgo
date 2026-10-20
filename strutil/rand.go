@@ -1,30 +1,33 @@
 package strutil
 
 import (
-	"math/rand"
-	"strconv"
-	"strings"
+	crand "crypto/rand"
 
 	"github.com/google/uuid"
 )
 
-// Rand 生成随机字符串
+// Rand 生成密码学安全的随机字符串（0-9A-Za-z），可用于令牌等凭据场景。
+// 熵源不可用时直接 panic，不会退化为可预测的输出。
 func Rand(length uint) string {
-	rs := make([]string, length)
-
-	for range length {
-		t := rand.Intn(3)
-		switch t {
-		case 0:
-			rs = append(rs, strconv.Itoa(rand.Intn(10)))
-		case 1:
-			rs = append(rs, string(rune(rand.Intn(26)+65)))
-		default:
-			rs = append(rs, string(rune(rand.Intn(26)+97)))
+	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	const maxByte = 248 // 62 的最大整数倍，拒绝采样避免取模偏差
+	buf := make([]byte, 0, length)
+	raw := make([]byte, length)
+	for uint(len(buf)) < length {
+		if _, err := crand.Read(raw); err != nil {
+			panic("strutil.Rand: 系统熵源不可用: " + err.Error())
+		}
+		for _, b := range raw {
+			if b >= maxByte {
+				continue
+			}
+			buf = append(buf, alphabet[b%62])
+			if uint(len(buf)) == length {
+				break
+			}
 		}
 	}
-
-	return strings.Join(rs, "")
+	return string(buf)
 }
 
 // NewString 生成基于 UUID v7 的唯一字符串

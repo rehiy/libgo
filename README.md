@@ -572,7 +572,7 @@ filer.Write("/path/to/id_rsa.pub", []byte(publicKey))
 ```go
 import "github.com/rehiy/libgo/strutil"
 
-// 生成随机字符串（字母数字混合）
+// 生成密码学安全的随机字符串（字母数字混合），可用于令牌等凭据
 randStr := strutil.Rand(16)  // 如 "aB3xY9zK2mN7pQ1"
 
 // 生成 UUID v7（时间排序）
