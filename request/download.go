@@ -2,6 +2,9 @@ package request
 
 import (
 	"compress/gzip"
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,11 +13,27 @@ import (
 )
 
 func Download(url, target string, isGzip bool) (string, error) {
-	resp, err := http.Get(url)
+	return DownloadContext(context.Background(), url, target, isGzip)
+}
+
+// DownloadContext binds the request and body read to ctx. An optional client
+// allows callers to configure transport and redirect policy without global changes.
+func DownloadContext(ctx context.Context, url, target string, isGzip bool, clients ...*http.Client) (string, error) {
+	client := http.DefaultClient
+	if len(clients) > 0 && clients[0] != nil {
+		client = clients[0]
+	}
+
+	req := &Client{Method: http.MethodGet, Url: url}
+	resp, err := req.DoContext(ctx, client)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
 
 	// 默认读取器
 	reader := resp.Body
@@ -55,7 +74,8 @@ func SaveStream(reader io.Reader, target string) (string, error) {
 
 	// 写入文件数据
 	_, err = io.Copy(writer, reader)
-	if err != nil {
+	if err = errors.Join(err, writer.Close()); err != nil {
+		os.Remove(writer.Name())
 		return "", err
 	}
 
