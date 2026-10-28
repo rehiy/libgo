@@ -624,23 +624,30 @@ cache.StopCleanup()
 ### 应用自更新
 
 ```go
-import "github.com/rehiy/libgo/upgrade"
+import (
+    "context"
+    "time"
+
+    "github.com/rehiy/libgo/upgrade"
+)
+
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+defer cancel()
+u := upgrade.NewUpdaterContext(ctx, "https://update.example.com/check", "1.0.0")
 
 // 检查更新
-info, err := upgrade.CheckUpdate(&upgrade.UpdateParam{
-    Server:  "https://update.example.com/check",
-    Version: "1.0.0",
-})
+info, err := u.Check()
 
 // 执行更新
-err := upgrade.ApplyUpdate(&upgrade.UpdateParam{
-    Server:  "https://update.example.com/check",
-    Version: "1.0.0",
-})
+err = u.Apply()
 
 // 重启应用
-err := upgrade.Restart()
+err = u.Restart()
 ```
+
+`NewUpdater(server, version)` 保留原构造方式，内部使用后台上下文；需要取消或超时则使用 `NewUpdaterContext(ctx, server, version)`。实例方法 `Check()`、`Apply()`、`Restart()` 始终复用初始化上下文，不提供另传上下文的方法。上下文取消或到期后应创建新实例，不会自动切换为后台上下文。原包级快捷函数及其参数结构已移除，调用方需迁移到实例方法。
+
+自定义下载继续使用原 `Download` 回调，回调捕获同一初始化上下文并自行响应取消。默认下载复用 `request.DownloadContext`；`HTTPClient` 可指定传输和重定向策略。普通请求使用 `request.Client.RequestContext(ctx)`，原 `Request()` 不变。升级检查和下载统一复用 `request.Client.DoContext(ctx, client)`，该方法返回原始响应，调用方负责关闭正文；传入 `nil` 客户端时使用 `Client.Timeout`，指定客户端时保留其配置。文件提交前检查取消，校验及回滚逻辑不变。
 
 ### 云服务 API 调用
 

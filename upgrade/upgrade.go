@@ -1,8 +1,12 @@
 package upgrade
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -13,12 +17,6 @@ import (
 	"github.com/rehiy/libgo/logman"
 	"github.com/rehiy/libgo/request"
 )
-
-// UpdateParam 更新参数
-type UpdateParam struct {
-	Server  string `note:"更新服务器"`
-	Version string `note:"当前版本"`
-}
 
 // UpdateInfo 更新信息
 type UpdateInfo struct {
@@ -58,33 +56,54 @@ type DownloadHandler func(pkgURL, outputPath string) (string, error)
 
 // Updater handles remote update checks and local binary replacement.
 type Updater struct {
+	ctx        context.Context
 	Server     string
 	Version    string
 	TargetPath string
 	TargetMode os.FileMode
-	Download   DownloadHandler
+	Download   DownloadHandler // Custom downloads must honor the constructor context.
+	HTTPClient *http.Client    // Optional client for checks and default downloads.
 }
 
-// NewUpdater creates an update manager for the given server and current version.
+// NewUpdater creates an update manager using a background context.
 func NewUpdater(server, version string) *Updater {
-	return &Updater{Server: server, Version: version}
+	return NewUpdaterContext(context.Background(), server, version)
 }
 
-// Check fetches update metadata from the configured server.
+// NewUpdaterContext creates an update manager bound to ctx for its lifetime.
+func NewUpdaterContext(ctx context.Context, server, version string) *Updater {
+	return &Updater{ctx: ctx, Server: server, Version: version}
+}
+
+// Check fetches update metadata using the constructor context.
 func (u *Updater) Check() (*UpdateInfo, error) {
 	info := &UpdateInfo{}
+	if err := u.ctx.Err(); err != nil {
+		return info, err
+	}
 
 	urlStr, err := u.buildUpdateURL()
 	if err != nil {
 		return info, err
 	}
 
-	body, err := request.Get(urlStr, request.H{})
+	client := u.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	req := &request.Client{Method: http.MethodGet, Url: urlStr}
+	res, err := req.DoContext(u.ctx, client)
 	if err != nil {
 		return info, err
 	}
 
-	err = json.Unmarshal(body, &info)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return info, fmt.Errorf("update server returned HTTP %d", res.StatusCode)
+	}
+
+	err = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(info)
 	if err != nil {
 		return info, err
 	}
@@ -99,7 +118,8 @@ func (u *Updater) Check() (*UpdateInfo, error) {
 	return info, nil
 }
 
-// Apply checks for an update and applies it if available.
+// Apply checks and applies an update using the constructor context.
+// A custom Download hook must handle cancellation; it cannot be forcibly interrupted.
 func (u *Updater) Apply() error {
 	logger := logman.Named("upgrade")
 	logger.Info(
@@ -142,12 +162,18 @@ func (u *Updater) Apply() error {
 		return err
 	}
 
-	handler := u.Download
-	if handler == nil {
-		handler = defaultDownloadHandler
+	defer os.Remove(binaryUpdater.NewBinary)
+	if err := u.ctx.Err(); err != nil {
+		return err
 	}
 
-	output, err := handler(info.Package, binaryUpdater.NewBinary)
+	var output string
+	if u.Download != nil {
+		output, err = u.Download(info.Package, binaryUpdater.NewBinary)
+	} else {
+		output, err = request.DownloadContext(u.ctx, info.Package, binaryUpdater.NewBinary, true, u.HTTPClient)
+	}
+
 	if err != nil {
 		logger.Error("download package failed", "error", err)
 		return err
@@ -156,11 +182,17 @@ func (u *Updater) Apply() error {
 		binaryUpdater.NewBinary = output
 	}
 
+	if err := u.ctx.Err(); err != nil {
+		return err
+	}
 	if err = binaryUpdater.VerifyChecksum(); err != nil {
 		logger.Error("verify checksum failed", "error", err)
 		return err
 	}
 
+	if err := u.ctx.Err(); err != nil {
+		return err
+	}
 	if err = binaryUpdater.CommitBinary(); err != nil {
 		logger.Error("apply binary failed", "error", err)
 		if _, ok := err.(*ErrRollback); ok {
@@ -174,6 +206,10 @@ func (u *Updater) Apply() error {
 
 // Restart restarts the current process.
 func (u *Updater) Restart() error {
+	if err := u.ctx.Err(); err != nil {
+		return err
+	}
+
 	self := u.TargetPath
 	if self == "" {
 		var err error
@@ -217,26 +253,4 @@ func (u *Updater) buildUpdateURL() (string, error) {
 	parsed.RawQuery = q.Encode()
 
 	return parsed.String(), nil
-}
-
-func defaultDownloadHandler(pkgURL, outputPath string) (string, error) {
-	if _, err := request.Download(pkgURL, outputPath, true); err != nil {
-		return "", err
-	}
-	return outputPath, nil
-}
-
-// ApplyUpdate 执行更新
-func ApplyUpdate(param *UpdateParam) error {
-	return NewUpdater(param.Server, param.Version).Apply()
-}
-
-// CheckUpdate 检查更新
-func CheckUpdate(param *UpdateParam) (*UpdateInfo, error) {
-	return NewUpdater(param.Server, param.Version).Check()
-}
-
-// Restart 重启应用
-func Restart() error {
-	return NewUpdater("", "").Restart()
 }
