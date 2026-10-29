@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,8 +52,44 @@ func NotExist(p string) bool {
 // 文件类型检测函数
 // ============================================================
 
-// IsText 判断文件是否为文本文件
-// 通过读取文件的前 512 字节，检查是否包含非文本字符（如 null 字节）
+// TextSniffSize 判断文本/二进制时检查的头部字节数
+const TextSniffSize = 8000
+
+// IsTextBytes 判断内容是否为文本
+// 仅检查头部 TextSniffSize 字节：包含 null 字节，或非打印字符超过 10%，则认为是二进制；空内容视为文本
+func IsTextBytes(data []byte) bool {
+	if len(data) > TextSniffSize {
+		data = data[:TextSniffSize]
+	}
+	if len(data) == 0 {
+		return true
+	}
+
+	nonPrintable := 0
+	for _, b := range data {
+		if b == 0 {
+			return false
+		}
+		// 允许：tab (9), newline (10), carriage return (13), 空格 (32) 及以上
+		if b < 9 || (b > 13 && b < 32) || b == 127 {
+			nonPrintable++
+		}
+	}
+
+	return float64(nonPrintable)/float64(len(data)) <= 0.1
+}
+
+// ReadSniff 读取最多 TextSniffSize 字节用于类型判断，遇到 EOF 不视为错误
+func ReadSniff(r io.Reader) ([]byte, error) {
+	buf := make([]byte, TextSniffSize)
+	n, err := io.ReadFull(r, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+	}
+	return buf[:n], err
+}
+
+// IsText 判断文件是否为文本文件（空文件视为文本，无法读取返回 false）
 func IsText(p string) bool {
 	f, err := os.Open(p)
 	if err != nil {
@@ -60,36 +97,11 @@ func IsText(p string) bool {
 	}
 	defer f.Close()
 
-	// 读取前 512 字节进行判断（与 http.DetectContentType 的逻辑类似）
-	buf := make([]byte, 512)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
+	buf, err := ReadSniff(f)
+	if err != nil {
 		return false
 	}
-	buf = buf[:n]
-
-	// 检查是否包含 null 字节，包含则认为是二进制文件
-	for _, b := range buf {
-		if b == 0 {
-			return false
-		}
-	}
-
-	// 检查是否包含过多非打印字符
-	nonPrintable := 0
-	for _, b := range buf {
-		// 允许：tab (9), newline (10), carriage return (13), 空格 (32) 及以上
-		if b < 9 || (b > 13 && b < 32) || b == 127 {
-			nonPrintable++
-		}
-	}
-
-	// 如果非打印字符超过 10%，认为是二进制文件
-	if len(buf) > 0 && float64(nonPrintable)/float64(len(buf)) > 0.1 {
-		return false
-	}
-
-	return true
+	return IsTextBytes(buf)
 }
 
 // ============================================================

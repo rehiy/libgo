@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+
+	"github.com/rehiy/libgo/filer"
 )
 
 // FileInfo SFTP 文件/目录信息
@@ -406,8 +408,7 @@ func (c *SFTPClient) Truncate(opt *SSHClientOption, path string, size int64) err
 	return nil
 }
 
-// IsTextFile 判断远程文件是否为文本文件
-// 通过读取文件的前 512 字节，检查是否包含非文本字符（如 null 字节）
+// IsTextFile 判断远程文件是否为文本文件（判断规则同 filer.IsTextBytes）
 func (c *SFTPClient) IsTextFile(opt *SSHClientOption, filePath string) (bool, error) {
 	conn, err := c.getConn(opt)
 	if err != nil {
@@ -420,36 +421,11 @@ func (c *SFTPClient) IsTextFile(opt *SSHClientOption, filePath string) (bool, er
 	}
 	defer f.Close()
 
-	// 读取前 512 字节进行判断（与 http.DetectContentType 的逻辑类似）
-	buf := make([]byte, 512)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
+	buf, err := filer.ReadSniff(f)
+	if err != nil {
 		return false, fmt.Errorf("读取文件失败: %w", err)
 	}
-	buf = buf[:n]
-
-	// 检查是否包含 null 字节，包含则认为是二进制文件
-	for _, b := range buf {
-		if b == 0 {
-			return false, nil
-		}
-	}
-
-	// 检查是否包含过多非打印字符
-	nonPrintable := 0
-	for _, b := range buf {
-		// 允许：tab (9), newline (10), carriage return (13), 空格 (32) 及以上
-		if b < 9 || (b > 13 && b < 32) || b == 127 {
-			nonPrintable++
-		}
-	}
-
-	// 如果非打印字符超过 10%，认为是二进制文件
-	if len(buf) > 0 && float64(nonPrintable)/float64(len(buf)) > 0.1 {
-		return false, nil
-	}
-
-	return true, nil
+	return filer.IsTextBytes(buf), nil
 }
 
 // Glob 根据模式匹配文件路径（如 *.txt, /path/*.log）
