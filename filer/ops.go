@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -34,7 +35,7 @@ func IsLink(p string) bool {
 // Exist 判断文件或目录是否存在
 func Exist(p string) bool {
 	if _, err := os.Stat(p); err != nil {
-		return os.IsExist(err)
+		return errors.Is(err, os.ErrExist)
 	}
 
 	return true
@@ -43,7 +44,7 @@ func Exist(p string) bool {
 // NotExist 判断文件或目录是否不存在
 func NotExist(p string) bool {
 	if _, err := os.Stat(p); err != nil {
-		return os.IsNotExist(err)
+		return errors.Is(err, os.ErrNotExist)
 	}
 	return false
 }

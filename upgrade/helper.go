@@ -59,14 +59,14 @@ func commitBinary(newBinary, targetPath string, targetMode os.FileMode, oldVersi
 	var targetMoved bool
 
 	if _, err := os.Stat(targetPath); err == nil {
-		if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		if err := os.Rename(targetPath, backupPath); err != nil {
 			return err
 		}
 		targetMoved = true
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
