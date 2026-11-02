@@ -2,11 +2,13 @@ package jsonl
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -15,7 +17,7 @@ import (
 func ScanFile(path string, filter Filter, handler LineHandler) error {
 	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
@@ -56,7 +58,7 @@ func ScanSince(s *Store, cutoffUnix int64, tsField string, extra Filter, handler
 }
 
 // DecodeSince 泛型封装，将匹配行反序列化为 []T，跳过坏行。
-func DecodeSince[T any](s *Store, cutoffUnix int64, tsField string, extra Filter) ([]T, error) {
+func (s *Store) DecodeSince[T any](cutoffUnix int64, tsField string, extra Filter) ([]T, error) {
 	var out []T
 	err := ScanSince(s, cutoffUnix, tsField, extra, func(line []byte) bool {
 		var v T
@@ -76,9 +78,9 @@ type sampledLine struct {
 
 // DecodeSinceSampled 从 cutoffUnix 起扫描多天文件，并按时间桶降采样到约 sampleSize 个点。
 // 同一时间桶内保留最后一条记录，返回顺序为从旧到新。
-func DecodeSinceSampled[T any](s *Store, cutoffUnix int64, tsField string, extra Filter, sampleSize int) ([]T, error) {
+func (s *Store) DecodeSinceSampled[T any](cutoffUnix int64, tsField string, extra Filter, sampleSize int) ([]T, error) {
 	if sampleSize <= 0 {
-		return DecodeSince[T](s, cutoffUnix, tsField, extra)
+		return s.DecodeSince[T](cutoffUnix, tsField, extra)
 	}
 
 	now := time.Now().Unix()
@@ -98,16 +100,12 @@ func DecodeSinceSampled[T any](s *Store, cutoffUnix int64, tsField string, extra
 		if !ok {
 			return true
 		}
-		bucket := (ts - cutoffUnix) / bucketSeconds
-		if bucket > maxBucket {
-			bucket = maxBucket
-		}
+		bucket := min((ts-cutoffUnix)/bucketSeconds, maxBucket)
 		prev, exists := buckets[bucket]
 		if exists && prev.ts > ts {
 			return true
 		}
-		dup := make([]byte, len(line))
-		copy(dup, line)
+		dup := bytes.Clone(line)
 		buckets[bucket] = sampledLine{ts: ts, line: dup}
 		return true
 	})
@@ -147,7 +145,7 @@ func DecodeTail[T any](path string, n int, filter Filter) ([]T, error) {
 
 // DecodeTailDays 从当前日期向前回扫 days 天，倒序取行直到达到 limit。
 // 适用于跨天查询最近 N 条记录（如计划任务执行历史）。
-func DecodeTailDays[T any](s *Store, days, limit int, filter Filter) ([]T, error) {
+func (s *Store) DecodeTailDays[T any](days, limit int, filter Filter) ([]T, error) {
 	if s == nil || days <= 0 || limit <= 0 {
 		return nil, nil
 	}
@@ -179,7 +177,7 @@ func tailLines(path string, n int, filter Filter) ([][]byte, error) {
 
 	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -198,10 +196,7 @@ func tailLines(path string, n int, filter Filter) ([][]byte, error) {
 	result := make([][]byte, 0, n)
 	pos := size
 	for pos > 0 && len(result) < n {
-		readSize := int64(chunkSize)
-		if pos < readSize {
-			readSize = pos
-		}
+		readSize := min(pos, int64(chunkSize))
 		pos -= readSize
 
 		if _, err := f.ReadAt(buf[:readSize], pos); err != nil && !errors.Is(err, io.EOF) {
@@ -213,8 +208,8 @@ func tailLines(path string, n int, filter Filter) ([][]byte, error) {
 		merged = append(merged, carry...)
 
 		end := len(merged)
-		for i := len(merged) - 1; i >= 0; i-- {
-			if merged[i] != '\n' {
+		for i, m := range slices.Backward(merged) {
+			if m != '\n' {
 				continue
 			}
 			line := merged[i+1 : end]
@@ -225,22 +220,19 @@ func tailLines(path string, n int, filter Filter) ([][]byte, error) {
 			if filter != nil && !filter(line) {
 				continue
 			}
-			dup := make([]byte, len(line))
-			copy(dup, line)
+			dup := bytes.Clone(line)
 			result = append(result, dup)
 			if len(result) >= n {
 				return result, nil
 			}
 		}
-		carry = make([]byte, end)
-		copy(carry, merged[:end])
+		carry = bytes.Clone(merged[:end])
 
 		if pos == 0 && len(carry) > 0 {
 			line := carry
 			carry = nil
 			if filter == nil || filter(line) {
-				dup := make([]byte, len(line))
-				copy(dup, line)
+				dup := bytes.Clone(line)
 				result = append(result, dup)
 			}
 		}

@@ -46,9 +46,7 @@ func daysInRange(fromUnix, toUnix int64, loc *time.Location) []string {
 	if loc == nil {
 		loc = time.Local
 	}
-	if toUnix < fromUnix {
-		toUnix = fromUnix
-	}
+	toUnix = max(toUnix, fromUnix)
 	from := time.Unix(fromUnix, 0).In(loc)
 	to := time.Unix(toUnix, 0).In(loc)
 	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)

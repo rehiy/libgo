@@ -3,6 +3,7 @@ package archive
 import (
 	"archive/zip"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,8 +68,8 @@ func zipFile(zw *zip.Writer, srcPath string) error {
 // zipDir 将目录下所有文件递归写入 zip
 func zipDir(zw *zip.Writer, srcPath string) error {
 	baseName := filepath.Base(srcPath)
-	return filepath.Walk(srcPath, func(filePath string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	return filepath.WalkDir(srcPath, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return err
 		}
 		relPath, err := filepath.Rel(srcPath, filePath)

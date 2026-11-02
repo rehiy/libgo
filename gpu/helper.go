@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"io"
@@ -56,7 +57,7 @@ func normalizePCIAddress(addr string) string {
 }
 
 func readCSVRecords(data []byte) ([][]string, error) {
-	r := csv.NewReader(strings.NewReader(string(data)))
+	r := csv.NewReader(bytes.NewReader(data))
 	r.TrimLeadingSpace = true
 	var records [][]string
 	for {

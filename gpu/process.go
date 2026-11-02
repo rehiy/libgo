@@ -1,8 +1,9 @@
 package gpu
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -51,11 +52,8 @@ func GetProcessStats(ctx context.Context) ([]*ProcessStat, error) {
 
 	applyProcessUtilization(stats, time.Now())
 
-	sort.Slice(stats, func(i, j int) bool {
-		if stats[i].MemoryUsed == stats[j].MemoryUsed {
-			return stats[i].PID < stats[j].PID
-		}
-		return stats[i].MemoryUsed > stats[j].MemoryUsed
+	slices.SortFunc(stats, func(a, b *ProcessStat) int {
+		return cmp.Or(cmp.Compare(b.MemoryUsed, a.MemoryUsed), cmp.Compare(a.PID, b.PID))
 	})
 
 	return stats, err
@@ -87,14 +85,10 @@ func applyProcessUtilization(list []*ProcessStat, now time.Time) {
 					}
 					matched = true
 					usage := float64(current-base) / 1e9 / elapsed * 100
-					if usage > peak {
-						peak = usage
-					}
+					peak = max(peak, usage)
 				}
 				if matched {
-					if peak > 100 {
-						peak = 100
-					}
+					peak = min(peak, 100)
 					stat.Utilization = peak
 				}
 			}
@@ -110,10 +104,8 @@ func appendDevice(stat *ProcessStat, device string) {
 	if device == "" {
 		return
 	}
-	for _, exist := range stat.Devices {
-		if exist == device {
-			return
-		}
+	if slices.Contains(stat.Devices, device) {
+		return
 	}
 	stat.Devices = append(stat.Devices, device)
 }

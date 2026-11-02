@@ -33,8 +33,5 @@ func KeepAlive(conn Pinger, interval time.Duration) (stop func()) {
 		}
 	}()
 
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(done) })
-	}
+	return sync.OnceFunc(func() { close(done) })
 }

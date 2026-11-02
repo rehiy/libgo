@@ -161,10 +161,7 @@ func (c *Client) watchChanges(ctx context.Context, key string) (<-chan struct{},
 			case <-time.After(backoff):
 			}
 			if backoff < maxBackoff {
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+				backoff = min(backoff*2, maxBackoff)
 			}
 		}
 	}()

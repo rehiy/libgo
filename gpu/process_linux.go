@@ -6,10 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,11 +41,7 @@ func collectGPUProcesses(ctx context.Context) ([]*ProcessStat, error) {
 		return nil, collectErr
 	}
 
-	list := make([]*ProcessStat, 0, len(stats))
-	for _, stat := range stats {
-		list = append(list, stat)
-	}
-	return list, collectErr
+	return slices.AppendSeq(make([]*ProcessStat, 0, len(stats)), maps.Values(stats)), collectErr
 }
 
 // hasDRMDevices 判断系统是否存在 DRM 设备节点，不存在时跳过 /proc 扫描
@@ -75,20 +72,18 @@ func collectDRMProcesses() (map[int32]*ProcessStat, error) {
 			continue
 		}
 
-		wg.Add(1)
-		go func(pid int32) {
-			defer wg.Done()
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			stat := scanProcessDRM(pid, vendors)
+			stat := scanProcessDRM(int32(pid), vendors)
 			if stat == nil {
 				return
 			}
 			mu.Lock()
-			result[pid] = stat
+			result[int32(pid)] = stat
 			mu.Unlock()
-		}(int32(pid))
+		})
 	}
 
 	wg.Wait()
@@ -148,7 +143,7 @@ func scanProcessDRM(pid int32, vendors map[string]string) *ProcessStat {
 			stat.Vendor = vendors[device]
 		}
 	}
-	sort.Strings(stat.Devices)
+	slices.Sort(stat.Devices)
 
 	return stat
 }
@@ -163,7 +158,7 @@ func parseDRMFdInfo(data []byte) (uint64, map[string]uint64) {
 		engines     map[string]uint64
 	)
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		key, value, unit := splitFdInfoLine(line)
 
 		switch {
@@ -200,13 +195,13 @@ func parseDRMFdInfo(data []byte) (uint64, map[string]uint64) {
 
 // splitFdInfoLine 拆分 fdinfo 行，形如 "drm-memory-vram:\t4096 KiB"
 func splitFdInfoLine(line string) (key, value, unit string) {
-	pos := strings.Index(line, ":")
-	if pos < 0 {
+	before, after, ok := strings.Cut(line, ":")
+	if !ok {
 		return "", "", ""
 	}
 
-	key = strings.TrimSpace(line[:pos])
-	fields := strings.Fields(line[pos+1:])
+	key = strings.TrimSpace(before)
+	fields := strings.Fields(after)
 	if len(fields) == 0 {
 		return key, "", ""
 	}

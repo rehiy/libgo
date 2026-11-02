@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net/http"
+	"slices"
 	"sync"
 
 	"github.com/libdns/libdns"
@@ -19,8 +20,8 @@ const (
 	LetsEncryptStaging    = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	LetsEncryptProduction = "https://acme-v02.api.letsencrypt.org/directory"
 	Buypass               = "https://api.buypass.com/acme/directory"
-	ZeroSSL              = "https://acme.zerossl.com/v2/DV90"
-	Google               = "https://dv.acme-v02.api.pki.goog/directory"
+	ZeroSSL               = "https://acme.zerossl.com/v2/DV90"
+	Google                = "https://dv.acme-v02.api.pki.goog/directory"
 )
 
 // Manager 证书管理器
@@ -78,10 +79,8 @@ func (m *Manager) GetCertificateForDomains(domains []string) (*tls.Certificate, 
 		return nil, ErrNoDomains
 	}
 
-	for _, d := range domains {
-		if isWildcard(d) {
-			return m.getCertDNS01(domains...)
-		}
+	if slices.ContainsFunc(domains, isWildcard) {
+		return m.getCertDNS01(domains...)
 	}
 
 	if len(domains) == 1 {

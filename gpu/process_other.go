@@ -2,7 +2,11 @@
 
 package gpu
 
-import "context"
+import (
+	"context"
+	"maps"
+	"slices"
+)
 
 // collectGPUProcesses 非 Linux 平台的进程级 GPU 占用采集
 // 这些平台没有内核通用接口（DRM fdinfo），仅能用 nvidia-smi 补齐 NVIDIA 显存与卡号
@@ -15,11 +19,7 @@ func collectGPUProcesses(ctx context.Context) ([]*ProcessStat, error) {
 		return nil, err
 	}
 
-	list := make([]*ProcessStat, 0, len(stats))
-	for _, stat := range stats {
-		list = append(list, stat)
-	}
-	return list, err
+	return slices.AppendSeq(make([]*ProcessStat, 0, len(stats)), maps.Values(stats)), err
 }
 
 // readProcComm 非 Linux 平台没有 /proc，进程名留空
