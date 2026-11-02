@@ -101,13 +101,13 @@ func parseIORegDict(s string) map[string]string {
 	s = strings.TrimSuffix(s, "}")
 
 	result := make(map[string]string)
-	for _, pair := range strings.Split(s, ",") {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
+	for pair := range strings.SplitSeq(s, ",") {
+		rawKey, rawVal, ok := strings.Cut(pair, "=")
+		if !ok {
 			continue
 		}
-		key := ioregUnquote(strings.TrimSpace(parts[0]))
-		val := strings.TrimSpace(parts[1])
+		key := ioregUnquote(strings.TrimSpace(rawKey))
+		val := strings.TrimSpace(rawVal)
 		result[key] = val
 	}
 	return result

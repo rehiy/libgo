@@ -178,15 +178,15 @@ func parseTerminalResize(data []byte, prefix string) (int, int, bool) {
 		return 0, 0, false
 	}
 	size := strings.TrimPrefix(msg, prefix)
-	parts := strings.Split(size, ":")
-	if len(parts) != 2 {
+	colsText, rowsText, ok := strings.Cut(size, ":")
+	if !ok {
 		return 0, 0, true
 	}
-	cols, err := strconv.Atoi(parts[0])
+	cols, err := strconv.Atoi(colsText)
 	if err != nil {
 		return 0, 0, true
 	}
-	rows, err := strconv.Atoi(parts[1])
+	rows, err := strconv.Atoi(rowsText)
 	if err != nil {
 		return 0, 0, true
 	}

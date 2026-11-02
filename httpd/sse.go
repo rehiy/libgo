@@ -57,7 +57,7 @@ func (w *writer) Write(p []byte) (int, error) {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if _, err := fmt.Fprintf(w.w, "data: %s\n", line); err != nil {
 			return 0, err
 		}

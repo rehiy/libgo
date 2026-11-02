@@ -10,7 +10,7 @@ import (
 func OrderSafe(data string) error {
 	var expr = regexp.MustCompile(`^(\w+)( DESC)?$`)
 
-	for _, v := range strings.Split(data, ",") {
+	for v := range strings.SplitSeq(data, ",") {
 		if !expr.MatchString(v) {
 			return errors.New("unsafe sorting field")
 		}

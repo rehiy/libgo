@@ -101,11 +101,8 @@ func (c *ServerConfig) matchOrigin(origin, pattern string) bool {
 	if origin == pattern {
 		return true
 	}
-	if strings.Contains(pattern, "*") {
-		parts := strings.SplitN(pattern, "*", 2)
-		if len(parts) == 2 {
-			return strings.HasPrefix(origin, parts[0]) && strings.HasSuffix(origin, parts[1])
-		}
+	if prefix, suffix, ok := strings.Cut(pattern, "*"); ok {
+		return strings.HasPrefix(origin, prefix) && strings.HasSuffix(origin, suffix)
 	}
 	return false
 }
