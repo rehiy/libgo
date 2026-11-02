@@ -37,15 +37,15 @@ func newClient(rq *RequestParam) (map[string]any, error) {
 	}
 
 	params := &ac.Params{
-		Action:      at.String(rq.Action),
-		Version:     at.String(rq.Version),
-		Protocol:    at.String("HTTPS"),
-		Pathname:    at.String("/"),
-		Method:      at.String("POST"),
-		AuthType:    at.String("AK"),
-		Style:       at.String("RPC"),
-		ReqBodyType: at.String("json"),
-		BodyType:    at.String("json"),
+		Action:      new(rq.Action),
+		Version:     new(rq.Version),
+		Protocol:    new("HTTPS"),
+		Pathname:    new("/"),
+		Method:      new("POST"),
+		AuthType:    new("AK"),
+		Style:       new("RPC"),
+		ReqBodyType: new("json"),
+		BodyType:    new("json"),
 	}
 
 	request := &ac.OpenApiRequest{

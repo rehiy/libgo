@@ -83,7 +83,7 @@ func getSDKError(e error) error {
 	}
 
 	exp := regexp.MustCompile(`\[request id:.+\]`)
-	msg := strings.Split(exp.ReplaceAllString(se.Message, ""), "\n")[0]
+	msg, _, _ := strings.Cut(exp.ReplaceAllString(se.Message, ""), "\n")
 
 	return errors.New(msg)
 }
