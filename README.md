@@ -724,7 +724,7 @@ events, errs := client.Watch(ctx, key)
 
 ## 版本要求
 
-- Go 1.26+
+- Go 1.27+
 
 ---
 
