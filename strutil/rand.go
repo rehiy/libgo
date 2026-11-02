@@ -2,8 +2,7 @@ package strutil
 
 import (
 	crand "crypto/rand"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // Rand 生成密码学安全的随机字符串（0-9A-Za-z），可用于令牌等凭据场景。
@@ -32,9 +31,5 @@ func Rand(length uint) string {
 
 // NewString 生成基于 UUID v7 的唯一字符串
 func NewString() string {
-	tid, err := uuid.NewV7()
-	if err != nil {
-		return uuid.NewString()
-	}
-	return tid.String()
+	return uuid.NewV7().String()
 }
