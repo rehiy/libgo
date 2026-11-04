@@ -188,11 +188,26 @@ for _, iface := range detail.NetInterface {
         iface.Name, iface.BytesRecv, iface.BytesSent)
 }
 
+// 独立查询 CPU 静态信息（ctx 为调用方的 context.Context）
+cpuStat, err := psutil.CPUInfo(ctx)
+if err != nil {
+    fmt.Printf("CPU 信息采集不完整: %v\n", err)
+}
+if cpuStat != nil {
+    fmt.Printf("CPU 型号: %v\n", cpuStat.Models)
+}
+
 // Go 运行时内存统计
 memStat := psutil.GoMemory()
 fmt.Printf("堆内存: %d MB, GC次数: %d\n",
     memStat.HeapInuse/1024/1024, memStat.NumGC)
 ```
+
+`DetailStat.CPU` 和 `CPUInfo(ctx)` 使用相同结构：`models` 是非空型号去重列表，`packages` 是已报告逻辑处理器所涉及的封装数，不代表主板全部已安装或离线封装，`physicalCores` 是物理核心总数，`logicalCPUs` 是系统报告的逻辑处理器总数。未知数量返回 `null`，不是 0；封装数只有在逐逻辑处理器数据完整且封装 ID 均有效时才确认，不能按型号数推断。`processors` 按逻辑处理器 ID 排序，包含 `id`、`packageId`、`coreId`、`model`、`vendor`；同一物理核心按 `(packageId, coreId)` 识别，任一 ID 为 `null` 时不可归并。型号与封装独立，同一封装可报告多个型号，适用于异构核心。
+
+当前 gopsutil 仅在 Linux 提供可确认的逐逻辑处理器记录；其他平台保留型号及可确认的总数，`processors` 返回空数组、`packages` 返回 `null`。物理核数仅在 Linux、Windows、macOS 使用平台采集结果，其余平台不把逻辑核数充当物理核数。型号和拓扑统一从 `cpu` 读取，删除原 `cpuModel[]`，不提供旧数据迁移或回退。`cpuCore`、`cpuCoreLogic`、`cpuPercent[]` 仍用于系统概要与聚合使用率统计。
+
+`CPUInfo(ctx)` 在各采集步骤之间检查取消，返回错误包含取消原因，并保留已采集的部分信息；底层同步读取本身不保证立即中断。Linux 逻辑数量可获取但 CPU 信息为空时，返回信息不可用错误。计数与已识别拓扑矛盾时将对应总数置为 `null`，不会凭不一致快照伪造总数。`Detail()` 复用同一校验，返回置为未知的 CPU 字段，不改变原概要统计字段，也不增加错误返回值。
 
 ### GPU 监控
 

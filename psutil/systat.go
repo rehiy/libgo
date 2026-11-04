@@ -1,6 +1,7 @@
 package psutil
 
 import (
+	"runtime"
 	"strings"
 	"time"
 
@@ -43,18 +44,11 @@ func Summary(withAddr bool) *SummaryStat {
 }
 
 func Detail(withAddr bool) *DetailStat {
-	ci, _ := cpu.Info()
+	ci, cpuErr := cpu.Info()
 	ni, _ := net.IOCounters(true)
 	di, _ := disk.IOCounters()
 	dp, _ := disk.Partitions(false)
 	sw, _ := mem.SwapMemory()
-
-	// CPU 信息
-
-	cpuModel := []string{}
-	for _, info := range ci {
-		cpuModel = append(cpuModel, info.ModelName)
-	}
 
 	// 网络信息
 
@@ -112,18 +106,17 @@ func Detail(withAddr bool) *DetailStat {
 
 	// 汇总信息
 
+	summary := Summary(withAddr)
+	cpuStat, _ := buildCPUStat(ci, summary.CPUCore, summary.CPUCoreLogic, runtime.GOOS)
+	if cpuErr != nil {
+		cpuStat.Packages = nil
+	}
 	return &DetailStat{
-		Summary(withAddr),
-		cpuModel,
-		netInterface,
-		netBytesRecv,
-		netBytesSent,
-		diskPartition,
-		diskTotal,
-		diskUsed,
-		diskReadBytes,
-		diskWriteBytes,
-		sw.Total,
-		sw.Used,
+		SummaryStat:  summary,
+		CPU:          cpuStat,
+		NetInterface: netInterface, NetBytesRecv: netBytesRecv, NetBytesSent: netBytesSent,
+		DiskPartition: diskPartition, DiskTotal: diskTotal, DiskUsed: diskUsed,
+		DiskReadBytes: diskReadBytes, DiskWriteBytes: diskWriteBytes,
+		SwapTotal: sw.Total, SwapUsed: sw.Used,
 	}
 }

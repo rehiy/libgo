@@ -54,7 +54,7 @@ func (p *SummaryStat) String() string {
 
 type DetailStat struct {
 	*SummaryStat
-	CpuModel       []string        `note:"CPU 型号" json:"cpuModel"`
+	CPU            *CPUStat        `note:"CPU 型号及可确认的拓扑" json:"cpu"`
 	NetInterface   []NetInterface  `note:"网卡信息" json:"netInterface"`
 	NetBytesRecv   uint64          `note:"网卡接收字节数" json:"netBytesRecv"`
 	NetBytesSent   uint64          `note:"网卡发送字节数" json:"netBytesSent"`
