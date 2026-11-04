@@ -7,7 +7,6 @@ import (
 // Go 内存信息
 
 type GoMemoryStat struct {
-	Alloc        uint64 `note:"已分配内存" json:"alloc"`
 	Sys          uint64 `note:"已申请内存" json:"sys"`
 	HeapAlloc    uint64 `note:"堆已分配内存" json:"heapAlloc"`
 	HeapInuse    uint64 `note:"堆已使用内存" json:"heapInuse"`

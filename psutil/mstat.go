@@ -10,7 +10,6 @@ func GoMemory() *GoMemoryStat {
 	runtime.ReadMemStats(mstat)
 
 	return &GoMemoryStat{
-		Alloc:        mstat.Alloc,
 		Sys:          mstat.Sys,
 		HeapAlloc:    mstat.HeapAlloc,
 		HeapInuse:    mstat.HeapInuse,
