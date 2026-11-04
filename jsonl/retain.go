@@ -9,16 +9,13 @@ import (
 	"time"
 )
 
-// dateLayout 日期格式（YYYY-MM-DD）
-const dateLayout = "2006-01-02"
-
-// CleanOlderThan 删除早于 retainDays 天的匹配文件。
+// CleanOlderThan 删除日期不晚于 retainDays 天前的匹配文件，仅处理有效日期文件名。
 func CleanOlderThan(dir string, naming Naming, retainDays int) error {
 	if retainDays <= 0 {
 		return nil
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -retainDays).Format(dateLayout)
-	pattern := filepath.Join(dir, naming.Prefix+naming.Sep+"????-??-??"+naming.Suffix)
+	pattern := filepath.Join(dir, naming.FileName("????-??-??"))
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("jsonl: glob %s: %w", pattern, err)
@@ -31,7 +28,10 @@ func CleanOlderThan(dir string, naming Naming, retainDays int) error {
 		if naming.Prefix != "" {
 			mid = strings.TrimPrefix(mid, naming.Prefix+naming.Sep)
 		}
-		if len(mid) != len(dateLayout) || mid > cutoffDate {
+		if mid > cutoffDate {
+			continue
+		}
+		if _, err := time.Parse(dateLayout, mid); err != nil {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
@@ -40,6 +40,8 @@ func CleanOlderThan(dir string, naming Naming, retainDays int) error {
 	}
 	return errors.Join(errs...)
 }
+
+// ─── 辅助函数 ───
 
 // daysInRange 返回 [fromUnix, toUnix] 范围内的所有日期（YYYY-MM-DD）。
 func daysInRange(fromUnix, toUnix int64, loc *time.Location) []string {

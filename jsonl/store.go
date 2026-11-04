@@ -2,6 +2,7 @@
 //
 // 写入：长连接 + bufio + 锁外序列化，降低系统调用与锁竞争
 // 读取：流式扫描 + gjson 过滤，避免全量加载
+// 增量读取：Cursor.ScanSince 保存按日文件的字节位置，支持 context 取消和半行续读
 //
 // 示例：
 //
@@ -13,6 +14,7 @@ package jsonl
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +23,9 @@ import (
 
 	"github.com/rehiy/libgo/logman"
 )
+
+// dateLayout 日期格式（YYYY-MM-DD）。
+const dateLayout = "2006-01-02"
 
 // Naming 定义按天滚动的文件命名规则。
 // 完整文件名：filepath.Join(Dir, Prefix+Sep+YYYY-MM-DD+Suffix)
@@ -36,21 +41,6 @@ func (n Naming) FileName(date string) string {
 		return date + n.Suffix
 	}
 	return n.Prefix + n.Sep + date + n.Suffix
-}
-
-// Store 管理单个目录下按天滚动的 JSONL 文件追加写入。
-type Store struct {
-	dir    string
-	naming Naming
-	opts   options
-
-	mu       sync.Mutex
-	date     string
-	file     *os.File
-	bw       *bufio.Writer
-	ch       chan []byte
-	stopOnce sync.Once
-	stopped  chan struct{}
 }
 
 // options Store 的可选参数
@@ -82,6 +72,23 @@ func WithFlushInterval(d time.Duration) Option {
 // WithLocation 指定时区，默认 time.Local。
 func WithLocation(loc *time.Location) Option {
 	return func(o *options) { o.loc = loc }
+}
+
+// Store 管理单个目录下按天滚动的 JSONL 文件追加写入。
+type Store struct {
+	dir    string
+	naming Naming
+	opts   options
+
+	mu       sync.Mutex
+	date     string
+	file     *os.File
+	bw       *bufio.Writer
+	ch       chan []byte
+	stopOnce sync.Once
+	stopped  chan struct{}
+	closeMu  sync.RWMutex
+	closed   bool
 }
 
 // New 创建 Store，dir 不存在时自动创建。
@@ -130,7 +137,8 @@ func (s *Store) Today() string {
 	return time.Now().In(s.opts.loc).Format(dateLayout)
 }
 
-// Append 序列化并追加一条记录。异步模式入队即返回，同步模式落盘后返回。
+// Append 序列化并追加一条记录。异步模式入队即返回，同步模式写入文件或缓冲后返回。
+// 关闭后返回错误；Close 等待已入队记录处理完，后台写入错误通过日志报告。
 func (s *Store) Append(v any) error {
 	line, err := json.Marshal(v)
 	if err != nil {
@@ -138,65 +146,23 @@ func (s *Store) Append(v any) error {
 	}
 	line = append(line, '\n')
 
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
+	if s.closed {
+		return errors.New("jsonl: store closed")
+	}
 	if s.ch != nil {
 		select {
 		case s.ch <- line:
 			return nil
 		default:
-			return fmt.Errorf("jsonl: async channel full")
+			return errors.New("jsonl: async channel full")
 		}
 	}
 	return s.writeLocked(line)
 }
 
-// writeLocked 加锁写入当前文件
-func (s *Store) writeLocked(line []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.ensureFileLocked(); err != nil {
-		return err
-	}
-
-	if s.bw != nil {
-		_, err := s.bw.Write(line)
-		return err
-	}
-	_, err := s.file.Write(line)
-	return err
-}
-
-// ensureFileLocked 确保文件句柄对应今天，必要时轮转。
-func (s *Store) ensureFileLocked() error {
-	today := s.Today()
-
-	if s.file != nil && s.date == today {
-		return nil
-	}
-
-	if s.file != nil {
-		if s.bw != nil {
-			_ = s.bw.Flush()
-		}
-		_ = s.file.Close()
-		s.file = nil
-		s.bw = nil
-	}
-
-	path := s.FilePath(today)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("jsonl: open %s: %w", path, err)
-	}
-	s.file = f
-	s.date = today
-	if s.opts.bufSize > 0 {
-		s.bw = bufio.NewWriterSize(f, s.opts.bufSize)
-	}
-	return nil
-}
-
-// Flush 刷盘，仅 bufio 模式有效。
+// Flush 将已写入 bufio 的数据提交给文件，不等待异步队列，也不调用 fsync。
 func (s *Store) Flush() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,34 +172,74 @@ func (s *Store) Flush() error {
 	return nil
 }
 
-// Close 停止异步写入、刷盘并关闭文件。可安全调用多次。
+// Close 停止接受追加，等待已入队记录写完，再刷盘关闭文件。可并发或重复调用。
 func (s *Store) Close() error {
 	s.stopOnce.Do(func() {
+		s.closeMu.Lock()
+		s.closed = true
 		if s.ch != nil {
 			close(s.ch)
-			<-s.stopped
 		} else {
 			close(s.stopped)
 		}
+		s.closeMu.Unlock()
+		<-s.stopped
 	})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.closeFileLocked()
+}
 
-	var flushErr error
+// writeLocked 加锁写入当前文件。
+func (s *Store) writeLocked(line []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureFileLocked(); err != nil {
+		return err
+	}
+	if s.bw != nil {
+		_, err := s.bw.Write(line)
+		return err
+	}
+	_, err := s.file.Write(line)
+	return err
+}
+
+// ensureFileLocked 确保文件句柄对应今天；调用方持有 mu。
+func (s *Store) ensureFileLocked() error {
+	today := s.Today()
+	if s.file != nil && s.date == today {
+		return nil
+	}
+	if err := s.closeFileLocked(); err != nil {
+		return err
+	}
+	path := s.FilePath(today)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("jsonl: open %s: %w", path, err)
+	}
+	s.file, s.date = file, today
+	if s.opts.bufSize > 0 {
+		s.bw = bufio.NewWriterSize(file, s.opts.bufSize)
+	}
+	return nil
+}
+
+// closeFileLocked 统一轮转和退出时的刷盘、关闭；调用方持有 mu。
+func (s *Store) closeFileLocked() error {
+	var flushErr, closeErr error
 	if s.bw != nil {
 		flushErr = s.bw.Flush()
 		s.bw = nil
 	}
 	if s.file != nil {
-		closeErr := s.file.Close()
+		closeErr = s.file.Close()
 		s.file = nil
-		if flushErr != nil {
-			return flushErr
-		}
-		return closeErr
 	}
-	return flushErr
+	s.date = ""
+	return errors.Join(flushErr, closeErr)
 }
 
 // runAsync 后台串行落盘

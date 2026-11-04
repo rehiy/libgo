@@ -47,18 +47,6 @@ func StrEq(path, value string) Filter {
 	}
 }
 
-// tsGTEFilter 时间戳 >= 过滤器，支持 Unix 秒和 RFC3339 字符串。
-// 字段不存在或解析失败返回 false。
-func tsGTEFilter(path string, cutoffUnix int64) Filter {
-	if path == "" {
-		return nil
-	}
-	return func(line []byte) bool {
-		ts, ok := ParseTimestamp(line, path)
-		return ok && ts >= cutoffUnix
-	}
-}
-
 // ParseTimestamp 从 JSONL 行中读取指定字段并解析为 Unix 秒。
 // 支持 Unix 秒（number）和 RFC3339 字符串两种格式；字段不存在或解析失败返回 false。
 func ParseTimestamp(line []byte, path string) (int64, bool) {
@@ -77,5 +65,18 @@ func ParseTimestamp(line []byte, path string) (int64, bool) {
 		return t.Unix(), true
 	default:
 		return 0, false
+	}
+}
+
+// ─── 辅助函数 ───
+
+// tsGTEFilter 时间戳 >= 过滤器，字段不存在或解析失败返回 false。
+func tsGTEFilter(path string, cutoffUnix int64) Filter {
+	if path == "" {
+		return nil
+	}
+	return func(line []byte) bool {
+		ts, ok := ParseTimestamp(line, path)
+		return ok && ts >= cutoffUnix
 	}
 }
